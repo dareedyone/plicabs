@@ -4,20 +4,20 @@ A small web dashboard for controlling a locally running [OBS Studio](https://obs
 
 Built with SvelteKit (Svelte 5), TypeScript, and Tailwind CSS. The browser talks only to the app's own HTTP API; a server-only module talks to OBS over OBS WebSocket. OBS credentials never reach the browser.
 
-> **Status:** project scaffold only. OBS integration, recording controls, and scene switching are not implemented yet. See [`docs/PROGRESS.md`](docs/PROGRESS.md).
+> **Status:** project scaffold only. OBS integration, recording controls, and scene switching are not implemented yet.
 
 ## Requirements
 
-- Node.js 24 LTS (pinned in `.nvmrc`; `^22.17.0` also satisfies the dependencies). Node 23 is **not** supported: ESLint 10 excludes it, and `.npmrc` enforces engine checks.
-- npm 11 (bundled with Node 24).
-- OBS Studio 28+ with its WebSocket server enabled. Only needed once the OBS integration exists.
+- Node.js 24 LTS is recommended (pinned in `.nvmrc`). The supported range is `^22.17.0 || >=24`, declared in `package.json` `engines` and enforced by `engine-strict` in `.npmrc`. Node 23 is not supported.
+- npm, as bundled with your Node installation. The project has been installed and verified with npm 12.2.0.
+- OBS Studio 28+ with its WebSocket server enabled. Not needed yet; required once the OBS integration is implemented.
 
 ## Setup
 
 ```sh
-nvm use          # or install Node 24 another way
+nvm use                # or install Node 24 another way
 npm install
-cp .env.example .env   # then set OBS_PASSWORD (used once OBS integration lands)
+cp .env.example .env   # optional for now; see Configuration
 ```
 
 ## Commands
@@ -37,7 +37,7 @@ cp .env.example .env   # then set OBS_PASSWORD (used once OBS integration lands)
 
 ## Configuration
 
-Environment variables are read on the server only. See [`.env.example`](.env.example).
+The variables in [`.env.example`](.env.example) are placeholders for the planned OBS integration. **The application does not read them yet.** Once implemented, they will be read on the server only and never sent to the browser.
 
 `npm run dev` and `npm run preview` load `.env` automatically. A production build does not, so `npm start` passes `--env-file-if-exists=.env` to Node. Variables already set in the environment (e.g. by Docker) are also used.
 
@@ -57,20 +57,22 @@ Environment variables are read on the server only. See [`.env.example`](.env.exa
 
 ```text
 src/
+  app.html                 HTML template
+  app.d.ts                 App-wide type declarations
+  lib/                     Code shared between server and browser (imported via #lib)
   routes/
-    +page.svelte          Dashboard UI
-    +layout.svelte        Global layout and Tailwind stylesheet
-    api/                  HTTP API routes (+server.ts), with colocated *.spec.ts tests
-  lib/                    Code shared with the browser
-  lib/server/             Server-only code (planned: OBS integration). SvelteKit blocks client imports.
-docs/                     Requirements, architecture, decisions, progress, testing plan
-.cursor/                  Cursor rules and project skills for AI-assisted development
+    +layout.svelte         Global layout; loads the Tailwind stylesheet
+    +page.svelte           Dashboard page (placeholder)
+    layout.css             Tailwind entry point
+    api/health/
+      +server.ts           GET /api/health
+      health.spec.ts       Route test (Vitest)
+static/                    Files served as-is
+vite.config.ts             Vite, SvelteKit (adapter-node), and Vitest configuration
+eslint.config.js           ESLint configuration
+prettier.config.js         Prettier configuration
+tsconfig.json              TypeScript configuration (extends SvelteKit's generated config)
+.env.example               Placeholder environment variables
 ```
 
-## Documentation
-
-- [`docs/PROJECT_CONTEXT.md`](docs/PROJECT_CONTEXT.md): assignment and acceptance criteria
-- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md): request flow and boundaries
-- [`docs/DECISIONS.md`](docs/DECISIONS.md): decision log
-- [`docs/TESTING.md`](docs/TESTING.md): automated and manual test plan
-- [`docs/PROGRESS.md`](docs/PROGRESS.md): milestone log
+OBS integration code will live in `src/lib/server/`. SvelteKit refuses to bundle modules in that folder into browser code.
