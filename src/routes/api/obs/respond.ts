@@ -1,11 +1,14 @@
 import { describeCause, ObsConnectionError } from '#lib/server/obs/connection.js';
-import { ObsRequestError } from '#lib/server/obs/recording.js';
+import { ObsRequestError } from '#lib/server/obs/errors.js';
 
 const HTTP_STATUS = {
-	OBS_UNAVAILABLE: 503,
-	OBS_AUTH_FAILED: 503,
+	INVALID_REQUEST: 400,
+	SCENE_NOT_FOUND: 404,
+	SCENE_CONFLICT: 409,
 	RECORDING_CONFLICT: 409,
-	OBS_REQUEST_FAILED: 502
+	OBS_REQUEST_FAILED: 502,
+	OBS_UNAVAILABLE: 503,
+	OBS_AUTH_FAILED: 503
 } as const;
 
 /** Runs an OBS operation and maps known failures to a stable JSON error body. */

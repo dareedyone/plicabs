@@ -4,7 +4,7 @@ A small web dashboard for controlling a locally running [OBS Studio](https://obs
 
 Built with SvelteKit (Svelte 5), TypeScript, and Tailwind CSS. The browser talks only to the app's own HTTP API; a server-only module talks to OBS over OBS WebSocket. OBS credentials never reach the browser.
 
-> **Status:** in development. The server-side OBS connection, a read-only connection-status endpoint, and recording start/stop/status APIs are in place. Scene switching and the dashboard UI are not implemented yet.
+> **Status:** in development. The server-side OBS connection, connection-status, recording, and scene list/switch APIs are in place. The dashboard UI is not implemented yet.
 
 ## Requirements
 
@@ -60,6 +60,8 @@ The values are validated when the app starts. If `OBS_HOST` or `OBS_PORT` is mis
 | `GET`  | `/api/obs/recording`       | Current OBS recording state. Connects if needed, then calls `GetRecordStatus`. |
 | `POST` | `/api/obs/recording/start` | Start recording. Connects if needed.                                           |
 | `POST` | `/api/obs/recording/stop`  | Stop recording. Connects if needed.                                            |
+| `GET`  | `/api/obs/scenes`          | Available scenes and the current program scene. Connects if needed.            |
+| `POST` | `/api/obs/scenes/switch`   | Switch the program scene. Connects if needed.                                  |
 
 ### `GET /api/obs/status`
 
@@ -100,17 +102,35 @@ The endpoint only reports what the server already knows. It never opens a connec
 
 `GetRecordStatus` does not include a filename. After stop, `fileName` comes from `StopRecord`'s `outputPath`; only the last path segment is returned, so a local username in the folder path never reaches the browser. While recording, `fileName` stays `null` until a later milestone subscribes to `RecordFileChanged`.
 
-### Recording errors
+### Scenes
 
-Action routes (recording start/stop/status) use `{ "error": { "code", "message" } }`. Being disconnected is a failed recording request, unlike `GET /api/obs/status`.
+`GET /api/obs/scenes` and `POST /api/obs/scenes/switch` return the same JSON object after talking to OBS. The list is returned in OBS order. Switch reads `GetSceneList` first, sends `SetCurrentProgramScene` only if the exact name exists and is not already current, then reads `GetCurrentProgramScene` to confirm. A switch to the current scene is `409`, not a silent success. POST clients should send `Content-Type: application/json` (SvelteKit treats a missing type as a cross-site form and answers `403`).
 
-| HTTP | `error.code`         | When                                                                                                                               |
-| ---- | -------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| 409  | `RECORDING_CONFLICT` | Start while already recording, or stop while not recording                                                                         |
-| 503  | `OBS_UNAVAILABLE`    | OBS could not be reached, timed out, or the connection dropped                                                                     |
-| 503  | `OBS_AUTH_FAILED`    | OBS rejected `OBS_PASSWORD`                                                                                                        |
-| 502  | `OBS_REQUEST_FAILED` | OBS rejected the request, or the new state could not be confirmed. If unconfirmed, check `GET /api/obs/recording` before retrying. |
-| 500  | `INTERNAL_ERROR`     | Unexpected server error. The body never includes internals                                                                         |
+```json
+{ "scenes": ["Cam", "Screen"], "currentScene": "Cam" }
+```
+
+| Field          | Meaning                                               |
+| -------------- | ----------------------------------------------------- |
+| `scenes`       | Scene names, in the order OBS returned them           |
+| `currentScene` | Current program scene name, or `null` if OBS has none |
+
+Only names are returned. UUIDs, preview-scene fields, and raw OBS scene objects never reach the browser.
+
+### Action errors
+
+Recording and scene routes use `{ "error": { "code", "message" } }`. Being disconnected is a failed action, unlike `GET /api/obs/status`.
+
+| HTTP | `error.code`         | When                                                                                                                             |
+| ---- | -------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| 400  | `INVALID_REQUEST`    | Switch body is missing, not JSON, or `sceneName` is not a non-empty string                                                       |
+| 404  | `SCENE_NOT_FOUND`    | The requested scene name is not in the OBS list                                                                                  |
+| 409  | `SCENE_CONFLICT`     | Switch to the scene that is already current                                                                                      |
+| 409  | `RECORDING_CONFLICT` | Start while already recording, or stop while not recording                                                                       |
+| 503  | `OBS_UNAVAILABLE`    | OBS could not be reached, timed out, or the connection dropped                                                                   |
+| 503  | `OBS_AUTH_FAILED`    | OBS rejected `OBS_PASSWORD`                                                                                                      |
+| 502  | `OBS_REQUEST_FAILED` | OBS rejected the request, or the new state could not be confirmed. If unconfirmed, check the matching GET route before retrying. |
+| 500  | `INTERNAL_ERROR`     | Unexpected server error. The body never includes internals                                                                       |
 
 ## Project structure
 
@@ -123,7 +143,9 @@ src/
     server/obs/            Server-only OBS integration; SvelteKit blocks browser imports
       config.ts            Validators for the OBS host, port and password
       connection.ts        Shared OBS WebSocket connection (lazy, one attempt at a time)
+      errors.ts            Shared request-error codes for recording and scenes
       recording.ts         Start/stop/status using the shared connection
+      scenes.ts            List/switch using the shared connection
       *.spec.ts            Unit tests with a stubbed OBS client
   routes/
     +layout.svelte         Global layout; loads the Tailwind stylesheet
@@ -142,6 +164,10 @@ src/
         start/+server.ts   POST /api/obs/recording/start
         stop/+server.ts    POST /api/obs/recording/stop
         recording.spec.ts  Route tests with a mocked recording service
+      scenes/
+        +server.ts         GET /api/obs/scenes
+        switch/+server.ts  POST /api/obs/scenes/switch
+        scenes.spec.ts     Route tests with a mocked scene service
 static/                    Files served as-is
 vite.config.ts             Vite, SvelteKit (adapter-node), and Vitest configuration
 eslint.config.js           ESLint configuration

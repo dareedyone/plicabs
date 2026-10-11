@@ -5,6 +5,9 @@ import {
 	ObsConnectionError,
 	type ObsConnection
 } from './connection';
+import { ObsRequestError } from './errors';
+
+export { ObsRequestError, type ObsRequestErrorCode } from './errors';
 
 /** OBS request status: the output is already running (`OutputRunning`). */
 const OUTPUT_RUNNING = 500;
@@ -18,8 +21,6 @@ const OUTPUT_NOT_RUNNING = 501;
 const VERIFY_TIMEOUT_MS = 1_000;
 const VERIFY_INTERVAL_MS = 50;
 
-export type ObsRequestErrorCode = 'RECORDING_CONFLICT' | 'OBS_REQUEST_FAILED';
-
 export interface RecordingStatus {
 	active: boolean;
 	paused: boolean;
@@ -27,17 +28,6 @@ export interface RecordingStatus {
 	durationMs: number;
 	/** Basename of the saved file after stop. `null` until OBS reports a path. */
 	fileName: string | null;
-}
-
-/** A recording (or other OBS request) failure with a stable, user-safe message. */
-export class ObsRequestError extends Error {
-	readonly code: ObsRequestErrorCode;
-
-	constructor(code: ObsRequestErrorCode, message: string, options?: ErrorOptions) {
-		super(message, options);
-		this.name = 'ObsRequestError';
-		this.code = code;
-	}
 }
 
 export async function getRecordingStatus(): Promise<RecordingStatus> {
