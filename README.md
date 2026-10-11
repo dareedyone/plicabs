@@ -4,21 +4,23 @@ A small web dashboard for controlling a locally running [OBS Studio](https://obs
 
 Built with SvelteKit (Svelte 5), TypeScript, and Tailwind CSS. The browser talks only to the app's own HTTP API; a server-only module talks to OBS over OBS WebSocket. OBS credentials never reach the browser.
 
-> **Status:** project scaffold only. OBS integration, recording controls, and scene switching are not implemented yet.
+> **Status:** in development. The server-side OBS connection service and its configuration are in place; no API route or UI uses them yet. Recording controls and scene switching are not implemented yet.
 
 ## Requirements
 
 - Node.js 24 LTS is recommended (pinned in `.nvmrc`). The supported range is `^22.17.0 || >=24`, declared in `package.json` `engines` and enforced by `engine-strict` in `.npmrc`. Node 23 is not supported.
 - npm, as bundled with your Node installation. The project has been installed and verified with npm 12.2.0.
-- OBS Studio 28+ with its WebSocket server enabled. Not needed yet; required once the OBS integration is implemented.
+- OBS Studio 28+ with its WebSocket server enabled (OBS > Tools > WebSocket Server Settings). Not needed for the automated tests or the build.
 
 ## Setup
 
 ```sh
 nvm use                # or install Node 24 another way
 npm install
-cp .env.example .env   # optional for now; see Configuration
+cp .env.example .env   # then edit; see Configuration
 ```
+
+`tsconfig.json` extends `node_modules/$app/tsconfig.json`, which SvelteKit generates. npm can delete it when installing or pruning packages, so if the editor then reports `File '$app/tsconfig' not found`, run `npm run prepare` to regenerate it and restart the TypeScript server. In VS Code or Cursor, also choose "Use Workspace Version" when prompted, because SvelteKit 3 requires TypeScript 6.
 
 ## Commands
 
@@ -37,15 +39,17 @@ cp .env.example .env   # optional for now; see Configuration
 
 ## Configuration
 
-The variables in [`.env.example`](.env.example) are placeholders for the planned OBS integration. **The application does not read them yet.** Once implemented, they will be read on the server only and never sent to the browser.
+OBS connection settings come from environment variables. They are declared and validated in `src/env.ts` and are readable only by server code. They are never sent to the browser.
+
+| Variable       | Required | Purpose                                                                   | Example     |
+| -------------- | -------- | ------------------------------------------------------------------------- | ----------- |
+| `OBS_HOST`     | Yes      | Hostname or IP address of the machine running OBS (no protocol or port)   | `127.0.0.1` |
+| `OBS_PORT`     | Yes      | OBS WebSocket port, 1–65535                                               | `4455`      |
+| `OBS_PASSWORD` | No       | OBS WebSocket password. Leave empty if authentication is disabled in OBS. | —           |
+
+The values are validated when the app starts. If `OBS_HOST` or `OBS_PORT` is missing or invalid, `npm start` exits and `npm run dev` answers every request with an error. Either way, the terminal shows which variable is wrong; the error never includes the values themselves. `npm run build` does not need these variables.
 
 `npm run dev` and `npm run preview` load `.env` automatically. A production build does not, so `npm start` passes `--env-file-if-exists=.env` to Node. Variables already set in the environment (e.g. by Docker) are also used.
-
-| Variable       | Purpose                       | Example     |
-| -------------- | ----------------------------- | ----------- |
-| `OBS_HOST`     | Host running OBS Studio       | `127.0.0.1` |
-| `OBS_PORT`     | OBS WebSocket port            | `4455`      |
-| `OBS_PASSWORD` | OBS WebSocket server password | —           |
 
 ## API
 
@@ -59,7 +63,12 @@ The variables in [`.env.example`](.env.example) are placeholders for the planned
 src/
   app.html                 HTML template
   app.d.ts                 App-wide type declarations
+  env.ts                   Declares and validates the OBS environment variables
   lib/                     Code shared between server and browser (imported via #lib)
+    server/obs/            Server-only OBS integration; SvelteKit blocks browser imports
+      config.ts            Validators for the OBS host, port and password
+      connection.ts        Shared OBS WebSocket connection (lazy, one attempt at a time)
+      *.spec.ts            Unit tests with a stubbed OBS client
   routes/
     +layout.svelte         Global layout; loads the Tailwind stylesheet
     +page.svelte           Dashboard page (placeholder)
@@ -72,7 +81,9 @@ vite.config.ts             Vite, SvelteKit (adapter-node), and Vitest configurat
 eslint.config.js           ESLint configuration
 prettier.config.js         Prettier configuration
 tsconfig.json              TypeScript configuration (extends SvelteKit's generated config)
-.env.example               Placeholder environment variables
+.env.example               Example environment variables
 ```
 
-OBS integration code will live in `src/lib/server/`. SvelteKit refuses to bundle modules in that folder into browser code.
+## Testing
+
+`npm test` runs the Vitest suite. The OBS tests replace the WebSocket client's network methods with stubs, so they don't need OBS Studio to be running. They can't show that the app works with a real OBS instance; that needs a manual check against OBS.
