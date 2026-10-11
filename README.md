@@ -4,7 +4,7 @@ A small web dashboard for controlling a locally running [OBS Studio](https://obs
 
 Built with SvelteKit (Svelte 5), TypeScript, and Tailwind CSS. The browser talks only to the app's own HTTP API; a server-only module talks to OBS over OBS WebSocket. OBS credentials never reach the browser.
 
-> **Status:** in development. The server-side OBS connection service and a read-only connection-status endpoint are in place. Nothing connects to OBS yet: the recording and scene routes that will connect on demand, and the UI, are not implemented yet.
+> **Status:** in development. The server-side OBS connection, a read-only connection-status endpoint, and recording start/stop/status APIs are in place. Scene switching and the dashboard UI are not implemented yet.
 
 ## Requirements
 
@@ -53,10 +53,13 @@ The values are validated when the app starts. If `OBS_HOST` or `OBS_PORT` is mis
 
 ## API
 
-| Method | Path              | Description                                                             |
-| ------ | ----------------- | ----------------------------------------------------------------------- |
-| `GET`  | `/api/health`     | App liveness check. Returns `{ "status": "ok" }`. Does not contact OBS. |
-| `GET`  | `/api/obs/status` | Current OBS connection status (below). Does not contact OBS.            |
+| Method | Path                       | Description                                                                    |
+| ------ | -------------------------- | ------------------------------------------------------------------------------ |
+| `GET`  | `/api/health`              | App liveness check. Returns `{ "status": "ok" }`. Does not contact OBS.        |
+| `GET`  | `/api/obs/status`          | Current OBS connection status (below). Does not contact OBS.                   |
+| `GET`  | `/api/obs/recording`       | Current OBS recording state. Connects if needed, then calls `GetRecordStatus`. |
+| `POST` | `/api/obs/recording/start` | Start recording. Connects if needed.                                           |
+| `POST` | `/api/obs/recording/stop`  | Stop recording. Connects if needed.                                            |
 
 ### `GET /api/obs/status`
 
@@ -73,6 +76,42 @@ Always responds `200` with JSON. Being disconnected from OBS is a normal status,
 
 The endpoint only reports what the server already knows. It never opens a connection, so before anything has tried to connect it returns `{ "state": "disconnected", "lastError": null }`. `OBS_UNAVAILABLE` means OBS couldn't be reached, timed out, or closed the connection. `OBS_AUTH_FAILED` means OBS rejected `OBS_PASSWORD`.
 
+### Recording
+
+`GET /api/obs/recording`, `POST /api/obs/recording/start`, and `POST /api/obs/recording/stop` all return the same JSON object after talking to OBS. Start and stop first read `GetRecordStatus`, send `StartRecord` or `StopRecord` only if the current state allows it, then read `GetRecordStatus` again to confirm. A repeated start or stop is `409`, not a silent success. POST clients should send `Content-Type: application/json` (SvelteKit treats a missing type as a cross-site form and answers `403`).
+
+```json
+{
+	"active": true,
+	"paused": false,
+	"timecode": "00:00:01.000",
+	"durationMs": 1000,
+	"fileName": null
+}
+```
+
+| Field        | Meaning                                                                                         |
+| ------------ | ----------------------------------------------------------------------------------------------- |
+| `active`     | Whether OBS is recording                                                                        |
+| `paused`     | Whether the recording output is paused                                                          |
+| `timecode`   | OBS formatted timecode                                                                          |
+| `durationMs` | Recording duration in milliseconds                                                              |
+| `fileName`   | Basename of the saved file after a successful stop. `null` until OBS reports a path (see below) |
+
+`GetRecordStatus` does not include a filename. After stop, `fileName` comes from `StopRecord`'s `outputPath`; only the last path segment is returned, so a local username in the folder path never reaches the browser. While recording, `fileName` stays `null` until a later milestone subscribes to `RecordFileChanged`.
+
+### Recording errors
+
+Action routes (recording start/stop/status) use `{ "error": { "code", "message" } }`. Being disconnected is a failed recording request, unlike `GET /api/obs/status`.
+
+| HTTP | `error.code`         | When                                                                                                                               |
+| ---- | -------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| 409  | `RECORDING_CONFLICT` | Start while already recording, or stop while not recording                                                                         |
+| 503  | `OBS_UNAVAILABLE`    | OBS could not be reached, timed out, or the connection dropped                                                                     |
+| 503  | `OBS_AUTH_FAILED`    | OBS rejected `OBS_PASSWORD`                                                                                                        |
+| 502  | `OBS_REQUEST_FAILED` | OBS rejected the request, or the new state could not be confirmed. If unconfirmed, check `GET /api/obs/recording` before retrying. |
+| 500  | `INTERNAL_ERROR`     | Unexpected server error. The body never includes internals                                                                         |
+
 ## Project structure
 
 ```text
@@ -84,6 +123,7 @@ src/
     server/obs/            Server-only OBS integration; SvelteKit blocks browser imports
       config.ts            Validators for the OBS host, port and password
       connection.ts        Shared OBS WebSocket connection (lazy, one attempt at a time)
+      recording.ts         Start/stop/status using the shared connection
       *.spec.ts            Unit tests with a stubbed OBS client
   routes/
     +layout.svelte         Global layout; loads the Tailwind stylesheet
@@ -92,9 +132,16 @@ src/
     api/health/
       +server.ts           GET /api/health
       health.spec.ts       Route test (Vitest)
-    api/obs/status/
-      +server.ts           GET /api/obs/status
-      status.spec.ts       Route tests with a mocked connection service
+    api/obs/
+      respond.ts           Maps OBS errors to HTTP JSON for action routes
+      status/
+        +server.ts         GET /api/obs/status
+        status.spec.ts     Route tests with a mocked connection service
+      recording/
+        +server.ts         GET /api/obs/recording
+        start/+server.ts   POST /api/obs/recording/start
+        stop/+server.ts    POST /api/obs/recording/stop
+        recording.spec.ts  Route tests with a mocked recording service
 static/                    Files served as-is
 vite.config.ts             Vite, SvelteKit (adapter-node), and Vitest configuration
 eslint.config.js           ESLint configuration

@@ -321,6 +321,102 @@ describe('ObsConnection', () => {
 		expect(logs.length).toBeGreaterThan(0);
 		expect(JSON.stringify(logs)).not.toContain(PASSWORD);
 	});
+
+	it('request() connects then forwards the OBS request', async () => {
+		const stub = createStubClient();
+		const call = vi.spyOn(stub.client, 'call').mockResolvedValue({
+			outputActive: false,
+			outputPaused: false,
+			outputTimecode: '00:00:00.000',
+			outputDuration: 0,
+			outputBytes: 0
+		});
+		const connection = new ObsConnection(config, stub.client);
+
+		const result = await connection.request('GetRecordStatus');
+
+		expect(stub.connect).toHaveBeenCalledTimes(1);
+		expect(call).toHaveBeenCalledWith('GetRecordStatus', undefined);
+		expect(result.outputActive).toBe(false);
+
+		await connection.request('GetRecordStatus');
+		expect(stub.connect).toHaveBeenCalledTimes(1);
+	});
+
+	it('request() does not send an OBS request when connect fails', async () => {
+		const stub = createStubClient();
+		const call = vi.spyOn(stub.client, 'call');
+		stub.connect.mockImplementationOnce(failWith(stub, 4009, 'Authentication failed.'));
+		const connection = new ObsConnection(config, stub.client);
+
+		await expect(connection.request('GetRecordStatus')).rejects.toMatchObject({
+			code: 'OBS_AUTH_FAILED'
+		});
+		expect(call).not.toHaveBeenCalled();
+	});
+
+	it('request() rethrows an OBS request error while the session is still up', async () => {
+		const stub = createStubClient();
+		vi.spyOn(stub.client, 'call').mockRejectedValueOnce(
+			new OBSWebSocketError(500, 'Output running')
+		);
+		const connection = new ObsConnection(config, stub.client);
+
+		const error = await connection.request('StartRecord').catch((e: unknown) => e);
+
+		expect(error).toBeInstanceOf(OBSWebSocketError);
+		expect(error).toMatchObject({ code: 500 });
+		expect(connection.isConnected()).toBe(true);
+	});
+
+	it('request() treats a drop during an in-flight call as OBS_UNAVAILABLE', async () => {
+		const stub = createStubClient();
+		// Real obs-websocket-js: call() waits for res:<id> and never rejects on close.
+		// onClose emits ConnectionClosed, then cleanup() orphans that waiter.
+		const call = vi.spyOn(stub.client, 'call').mockImplementationOnce(() => new Promise(() => {}));
+		const connection = new ObsConnection(config, stub.client);
+
+		const pending = connection.request('GetRecordStatus');
+		await vi.waitFor(() => expect(call).toHaveBeenCalled());
+		stub.closeSocket(1006, 'OBS quit');
+
+		await expect(pending).rejects.toMatchObject({
+			code: 'OBS_UNAVAILABLE',
+			message: 'Could not connect to OBS.'
+		});
+		expect(connection.isConnected()).toBe(false);
+	});
+
+	it('request() maps an in-flight close 4009 to OBS_AUTH_FAILED', async () => {
+		const stub = createStubClient();
+		const call = vi.spyOn(stub.client, 'call').mockImplementationOnce(() => new Promise(() => {}));
+		const connection = new ObsConnection(config, stub.client);
+
+		const pending = connection.request('GetRecordStatus');
+		await vi.waitFor(() => expect(call).toHaveBeenCalled());
+		stub.closeSocket(4009, 'Authentication failed.');
+
+		await expect(pending).rejects.toMatchObject({
+			code: 'OBS_AUTH_FAILED',
+			message: 'OBS rejected the WebSocket password.'
+		});
+	});
+
+	it('request() still classifies a close by its code if the session looks connected', async () => {
+		const stub = createStubClient();
+		const call = vi.spyOn(stub.client, 'call').mockImplementationOnce(() => new Promise(() => {}));
+		const connection = new ObsConnection(config, stub.client);
+
+		const pending = connection.request('GetRecordStatus');
+		await vi.waitFor(() => expect(call).toHaveBeenCalled());
+		vi.spyOn(connection, 'isConnected').mockReturnValue(true);
+		stub.closeSocket(4009, 'Authentication failed.');
+
+		const error = await pending.catch((e: unknown) => e);
+		expect(error).toBeInstanceOf(ObsConnectionError);
+		expect(error).toMatchObject({ code: 'OBS_AUTH_FAILED' });
+		expect(error).not.toBeInstanceOf(OBSWebSocketError);
+	});
 });
 
 describe('getObsConnection', () => {

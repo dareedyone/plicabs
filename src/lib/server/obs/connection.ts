@@ -1,4 +1,9 @@
-import OBSWebSocket, { EventSubscription, OBSWebSocketError } from 'obs-websocket-js';
+import OBSWebSocket, {
+	EventSubscription,
+	OBSWebSocketError,
+	type OBSRequestTypes,
+	type OBSResponseTypes
+} from 'obs-websocket-js';
 import { OBS_HOST, OBS_PASSWORD, OBS_PORT } from '$app/env/private';
 import { obsWebSocketUrl, type ObsConfig } from './config';
 
@@ -87,10 +92,48 @@ export class ObsConnection {
 		await this.#client.disconnect();
 	}
 
+	/**
+	 * Connects if needed, then sends an OBS request on the shared client.
+	 * Connection failures stay `ObsConnectionError`. OBS request errors are rethrown
+	 * as `OBSWebSocketError` so callers can map request-specific codes.
+	 *
+	 * obs-websocket-js `call()` only waits for `res:<id>`. On close it emits
+	 * `ConnectionClosed` and then `cleanup()` removes that waiter, so the promise
+	 * never settles. This races the public close event so a drop cannot hang a request.
+	 */
+	async request<Type extends keyof OBSRequestTypes>(
+		requestType: Type,
+		requestData?: OBSRequestTypes[Type]
+	): Promise<OBSResponseTypes[Type]> {
+		await this.connect();
+		let onClosed!: (error: OBSWebSocketError) => void;
+		const closed = new Promise<never>((_, reject) => {
+			onClosed = reject;
+			this.#client.once('ConnectionClosed', onClosed);
+		});
+		try {
+			return await Promise.race([this.#client.call(requestType, requestData), closed]);
+		} catch (cause) {
+			if (cause instanceof ObsConnectionError) {
+				throw cause;
+			}
+			// Close events carry WebSocket codes (1000–4999), including 4009. Classify
+			// those from the error itself: `#handleClosed` may not have cleared the
+			// session yet when this catch runs. OBS request statuses stay below 1000.
+			if (isWebSocketCloseError(cause) || !this.isConnected()) {
+				throw toConnectionError(cause);
+			}
+			throw cause;
+		} finally {
+			this.#client.off('ConnectionClosed', onClosed);
+		}
+	}
+
 	async #open(): Promise<void> {
 		const url = obsWebSocketUrl(this.#config);
 		const attempt = this.#client.connect(url, this.#config.password, {
-			// No events are used yet; subscribe when real-time updates need them.
+			// Recording and scenes still poll on demand. Subscribe to Outputs/Scenes
+			// when the SSE milestone starts listening for RecordStateChanged.
 			eventSubscriptions: EventSubscription.None
 		});
 		const timeoutError = new ObsConnectionError('OBS_UNAVAILABLE', 'Timed out connecting to OBS.');
@@ -141,6 +184,10 @@ function closeCodeToErrorCode(code: number): ObsConnectionErrorCode {
 	return code === AUTHENTICATION_FAILED ? 'OBS_AUTH_FAILED' : 'OBS_UNAVAILABLE';
 }
 
+function isWebSocketCloseError(cause: unknown): boolean {
+	return cause instanceof OBSWebSocketError && cause.code >= 1000;
+}
+
 function toConnectionError(cause: unknown): ObsConnectionError {
 	if (cause instanceof ObsConnectionError) {
 		return cause;
@@ -157,7 +204,7 @@ function toConnectionError(cause: unknown): ObsConnectionError {
 }
 
 /** Server-log detail. obs-websocket-js messages contain close reasons, never the password. */
-function describeCause(cause: unknown): string {
+export function describeCause(cause: unknown): string {
 	if (cause instanceof OBSWebSocketError) {
 		return `code ${cause.code}${cause.message ? ` (${cause.message})` : ''}`;
 	}
