@@ -4,7 +4,7 @@ A small web dashboard for controlling a locally running [OBS Studio](https://obs
 
 Built with SvelteKit (Svelte 5), TypeScript, and Tailwind CSS. The browser talks only to the app's own HTTP API; a server-only module talks to OBS over OBS WebSocket. OBS credentials never reach the browser.
 
-> **Status:** in development. The server-side OBS connection service and its configuration are in place; no API route or UI uses them yet. Recording controls and scene switching are not implemented yet.
+> **Status:** in development. The server-side OBS connection service and a read-only connection-status endpoint are in place. Nothing connects to OBS yet: the recording and scene routes that will connect on demand, and the UI, are not implemented yet.
 
 ## Requirements
 
@@ -53,9 +53,25 @@ The values are validated when the app starts. If `OBS_HOST` or `OBS_PORT` is mis
 
 ## API
 
-| Method | Path          | Description                                                             |
-| ------ | ------------- | ----------------------------------------------------------------------- |
-| `GET`  | `/api/health` | App liveness check. Returns `{ "status": "ok" }`. Does not contact OBS. |
+| Method | Path              | Description                                                             |
+| ------ | ----------------- | ----------------------------------------------------------------------- |
+| `GET`  | `/api/health`     | App liveness check. Returns `{ "status": "ok" }`. Does not contact OBS. |
+| `GET`  | `/api/obs/status` | Current OBS connection status (below). Does not contact OBS.            |
+
+### `GET /api/obs/status`
+
+Always responds `200` with JSON. Being disconnected from OBS is a normal status, not an HTTP error.
+
+```json
+{ "state": "disconnected", "lastError": "OBS_UNAVAILABLE" }
+```
+
+| Field       | Values                                           | Meaning                                                                                             |
+| ----------- | ------------------------------------------------ | --------------------------------------------------------------------------------------------------- |
+| `state`     | `"connected"`, `"connecting"`, `"disconnected"`  | The server's connection to OBS right now                                                            |
+| `lastError` | `null`, `"OBS_UNAVAILABLE"`, `"OBS_AUTH_FAILED"` | Why the last attempt failed or the last session ended. `null` after a success or before any attempt |
+
+The endpoint only reports what the server already knows. It never opens a connection, so before anything has tried to connect it returns `{ "state": "disconnected", "lastError": null }`. `OBS_UNAVAILABLE` means OBS couldn't be reached, timed out, or closed the connection. `OBS_AUTH_FAILED` means OBS rejected `OBS_PASSWORD`.
 
 ## Project structure
 
@@ -76,6 +92,9 @@ src/
     api/health/
       +server.ts           GET /api/health
       health.spec.ts       Route test (Vitest)
+    api/obs/status/
+      +server.ts           GET /api/obs/status
+      status.spec.ts       Route tests with a mocked connection service
 static/                    Files served as-is
 vite.config.ts             Vite, SvelteKit (adapter-node), and Vitest configuration
 eslint.config.js           ESLint configuration
