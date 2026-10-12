@@ -4,7 +4,7 @@ A small web dashboard for controlling a locally running [OBS Studio](https://obs
 
 Built with SvelteKit (Svelte 5), TypeScript, and Tailwind CSS. The browser talks only to the app's own HTTP API; a server-only module talks to OBS over OBS WebSocket. OBS credentials never reach the browser.
 
-> **Status:** in development. The server-side OBS APIs, dashboard UI, and SSE real-time updates are in place. Docker is not implemented yet.
+> **Status:** in development. The server-side OBS APIs, dashboard UI, SSE real-time updates, and a production Docker image are in place.
 
 ## Requirements
 
@@ -49,7 +49,42 @@ OBS connection settings come from environment variables. They are declared and v
 
 The values are validated when the app starts. If `OBS_HOST` or `OBS_PORT` is missing or invalid, `npm start` exits and `npm run dev` answers every request with an error. Either way, the terminal shows which variable is wrong; the error never includes the values themselves. `npm run build` does not need these variables.
 
-`npm run dev` and `npm run preview` load `.env` automatically. A production build does not, so `npm start` passes `--env-file-if-exists=.env` to Node. Variables already set in the environment (e.g. by Docker) are also used.
+`npm run dev` and `npm run preview` load `.env` automatically. A production build does not, so `npm start` passes `--env-file-if-exists=.env` to Node. Variables already set in the environment (e.g. by Docker `-e`) are also used. Do not copy `.env` into the image.
+
+## Docker
+
+The `Dockerfile` builds a production `adapter-node` server (`node:24-bookworm-slim`, one process). OBS settings are passed at **run** time. They are never build arguments and are never copied from `.env`.
+
+```sh
+docker build -t obs-control-app .
+```
+
+On macOS or Docker Desktop, the container reaches OBS on the host with `host.docker.internal`:
+
+```sh
+docker run --rm -p 3000:3000 \
+  -e OBS_HOST=host.docker.internal \
+  -e OBS_PORT=4455 \
+  -e OBS_PASSWORD \
+  obs-control-app
+```
+
+`OBS_PASSWORD` is taken from your shell if it is already set. Leave it unset or empty if OBS has authentication disabled. Do not put the password in the `Dockerfile` or in `docker build`.
+
+On Linux, Docker does not define `host.docker.internal` unless you add it:
+
+```sh
+docker run --rm -p 3000:3000 \
+  --add-host=host.docker.internal:host-gateway \
+  -e OBS_HOST=host.docker.internal \
+  -e OBS_PORT=4455 \
+  -e OBS_PASSWORD \
+  obs-control-app
+```
+
+Then open http://localhost:3000. `GET /api/health` is `{ "status": "ok" }` and does not contact OBS.
+
+`localhost` inside the container is the container, not the Mac. OBS WebSocket must accept connections from Docker’s bridge. If the dashboard stays on `OBS_UNAVAILABLE`, check that the WebSocket server is enabled and not bound only to `127.0.0.1`. Do not set `IDLE_TIMEOUT`; adapter-node would exit while an SSE client is idle.
 
 ## API
 
@@ -187,6 +222,8 @@ eslint.config.js           ESLint configuration
 prettier.config.js         Prettier configuration
 tsconfig.json              TypeScript configuration (extends SvelteKit's generated config)
 .env.example               Example environment variables
+Dockerfile                 Multi-stage production image (adapter-node, Node 24)
+.dockerignore              Excludes .env, Git, docs, and local tooling from the image
 ```
 
 ## Testing
