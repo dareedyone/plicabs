@@ -96,7 +96,8 @@ function sceneNames(scenes: unknown): string[] {
 			}
 		}
 	}
-	return names;
+	// GetSceneList is bottom-to-top. OBS Studio's scene dock is top-to-bottom.
+	return names.reverse();
 }
 
 function asSceneName(value: unknown): string | null {

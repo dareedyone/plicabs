@@ -1,7 +1,12 @@
 import OBSWebSocket, { EventSubscription, OBSWebSocketError } from 'obs-websocket-js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ObsConfig } from './config';
-import { getObsConnection, ObsConnection, ObsConnectionError } from './connection';
+import {
+	getObsConnection,
+	ObsConnection,
+	ObsConnectionError,
+	type ObsConnectionStatus
+} from './connection';
 
 vi.mock('$app/env/private', () => ({
 	OBS_HOST: '127.0.0.1',
@@ -99,14 +104,14 @@ describe('ObsConnection', () => {
 		expect(connection.status).toEqual({ state: 'disconnected', lastError: null });
 	});
 
-	it('connects with the configured URL and password and no event subscriptions', async () => {
+	it('connects with the configured URL and password and scene/output subscriptions', async () => {
 		const stub = createStubClient();
 		const connection = new ObsConnection(config, stub.client);
 
 		await connection.connect();
 
 		expect(stub.connect).toHaveBeenCalledWith('ws://127.0.0.1:4455', PASSWORD, {
-			eventSubscriptions: EventSubscription.None
+			eventSubscriptions: EventSubscription.Scenes | EventSubscription.Outputs
 		});
 		expect(connection.isConnected()).toBe(true);
 		expect(connection.status).toEqual({ state: 'connected', lastError: null });
@@ -119,7 +124,7 @@ describe('ObsConnection', () => {
 		await connection.connect();
 
 		expect(stub.connect).toHaveBeenCalledWith('ws://127.0.0.1:4455', undefined, {
-			eventSubscriptions: EventSubscription.None
+			eventSubscriptions: EventSubscription.Scenes | EventSubscription.Outputs
 		});
 	});
 
@@ -131,6 +136,19 @@ describe('ObsConnection', () => {
 		await connection.connect();
 
 		expect(stub.connect).toHaveBeenCalledTimes(1);
+	});
+
+	it('notifies status listeners on connect and close', async () => {
+		const stub = createStubClient();
+		const connection = new ObsConnection(config, stub.client);
+		const statuses: ObsConnectionStatus[] = [];
+		connection.onStatus((status) => statuses.push(status));
+
+		await connection.connect();
+		stub.closeSocket(1006);
+
+		expect(statuses.some((status) => status.state === 'connected')).toBe(true);
+		expect(statuses.at(-1)).toEqual({ state: 'disconnected', lastError: 'OBS_UNAVAILABLE' });
 	});
 
 	it('shares one attempt between concurrent callers', async () => {
@@ -444,7 +462,7 @@ describe('getObsConnection', () => {
 			.catch(() => {});
 
 		expect(connect).toHaveBeenCalledWith('ws://127.0.0.1:4455', 'env-test-password', {
-			eventSubscriptions: EventSubscription.None
+			eventSubscriptions: EventSubscription.Scenes | EventSubscription.Outputs
 		});
 	});
 });

@@ -1,6 +1,11 @@
 <script lang="ts">
 	import { recordingButtons } from '#lib/dashboard/controls.js';
-	import { formatElapsed, liveDurationMs, retainedStopDurationMs } from '#lib/dashboard/elapsed.js';
+	import {
+		formatElapsed,
+		isLiveClock,
+		liveDurationMs,
+		retainedStopDurationMs
+	} from '#lib/dashboard/elapsed.js';
 	import {
 		messageOf,
 		startRecording,
@@ -24,12 +29,12 @@
 
 	let busy = $state<'start' | 'stop' | null>(null);
 	let actionError = $state<string | null>(null);
-	let retainedMs = $state<number | null>(null);
+	let lastValidMs = $state(0);
 	let since = $state(0);
 	let now = $state(0);
 
 	$effect(() => {
-		if (!recording?.active) {
+		if (!isLiveClock(recording)) {
 			return;
 		}
 		const snapshot = recording.durationMs;
@@ -42,8 +47,29 @@
 		return () => clearInterval(id);
 	});
 
-	const liveMs = $derived(recording?.active ? liveDurationMs(recording.durationMs, since, now) : 0);
-	const shownMs = $derived(recording?.active ? liveMs : (retainedMs ?? recording?.durationMs ?? 0));
+	const liveMs = $derived(
+		isLiveClock(recording)
+			? liveDurationMs(recording.durationMs, since, now)
+			: (recording?.durationMs ?? 0)
+	);
+
+	$effect(() => {
+		if (!recording) {
+			return;
+		}
+		if (recording.active) {
+			const ms = isLiveClock(recording) ? liveMs : recording.durationMs;
+			lastValidMs = Number.isFinite(ms) && ms > 0 ? ms : 0;
+			return;
+		}
+		if (Number.isFinite(recording.durationMs) && recording.durationMs > 0) {
+			lastValidMs = recording.durationMs;
+		}
+	});
+
+	const shownMs = $derived(
+		recording?.active ? liveMs : retainedStopDurationMs(recording?.durationMs ?? 0, lastValidMs)
+	);
 	const buttons = $derived(recordingButtons(recording, loading, busy));
 	const recBadgeClass = $derived(
 		recording?.active ? 'bg-red-500/15 text-red-300' : 'bg-zinc-800 text-zinc-400'
@@ -58,11 +84,6 @@
 		actionError = null;
 		try {
 			const next = action === 'start' ? await startRecording() : await stopRecording();
-			if (action === 'stop') {
-				retainedMs = retainedStopDurationMs(next.durationMs, liveMs);
-			} else {
-				retainedMs = null;
-			}
 			onrecording(next);
 			onaction?.();
 		} catch (cause) {

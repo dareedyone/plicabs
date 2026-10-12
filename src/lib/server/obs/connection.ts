@@ -1,6 +1,7 @@
 import OBSWebSocket, {
 	EventSubscription,
 	OBSWebSocketError,
+	type OBSEventTypes,
 	type OBSRequestTypes,
 	type OBSResponseTypes
 } from 'obs-websocket-js';
@@ -12,6 +13,9 @@ const AUTHENTICATION_FAILED = 4009;
 
 /** obs-websocket-js has no connect timeout; an unreachable host could otherwise hang a request. */
 const CONNECT_TIMEOUT_MS = 5_000;
+
+/** Scene list/program changes and recording output events. Not high-volume. */
+export const OBS_EVENT_SUBSCRIPTIONS = EventSubscription.Scenes | EventSubscription.Outputs;
 
 export type ObsConnectionState = 'disconnected' | 'connecting' | 'connected';
 export type ObsConnectionErrorCode = 'OBS_UNAVAILABLE' | 'OBS_AUTH_FAILED';
@@ -49,11 +53,34 @@ export class ObsConnection {
 	#lastError: ObsConnectionErrorCode | null = null;
 	/** Set from a successful connect until the session closes, so failed attempts aren't reported as drops. */
 	#sessionActive = false;
+	readonly #statusListeners = new Set<(status: ObsConnectionStatus) => void>();
 
 	constructor(config: ObsConfig, client: OBSWebSocket = new OBSWebSocket()) {
 		this.#config = config;
 		this.#client = client;
 		this.#client.on('ConnectionClosed', (error) => this.#handleClosed(error));
+	}
+
+	/** Listen for connection-status changes. Returns an unsubscribe function. */
+	onStatus(listener: (status: ObsConnectionStatus) => void): () => void {
+		this.#statusListeners.add(listener);
+		return () => {
+			this.#statusListeners.delete(listener);
+		};
+	}
+
+	/**
+	 * Listen for an OBS protocol event on the shared client. Returns an unsubscribe function.
+	 * Handlers must not log raw payloads; they can contain local filesystem paths.
+	 */
+	onObsEvent<K extends keyof OBSEventTypes>(
+		event: K,
+		handler: (payload: OBSEventTypes[K]) => void
+	): () => void {
+		this.#client.on(event as 'Identified', handler as () => void);
+		return () => {
+			this.#client.off(event as 'Identified', handler as () => void);
+		};
 	}
 
 	get status(): ObsConnectionStatus {
@@ -80,9 +107,14 @@ export class ObsConnection {
 		if (this.#abandoned) {
 			return Promise.reject(new ObsConnectionError('OBS_UNAVAILABLE', 'Could not connect to OBS.'));
 		}
+		const started = this.#pending === null;
 		this.#pending ??= this.#open().finally(() => {
 			this.#pending = null;
+			this.#notifyStatus();
 		});
+		if (started) {
+			this.#notifyStatus();
+		}
 		return this.#pending;
 	}
 
@@ -90,6 +122,7 @@ export class ObsConnection {
 		this.#sessionActive = false;
 		this.#lastError = null;
 		await this.#client.disconnect();
+		this.#notifyStatus();
 	}
 
 	/**
@@ -132,9 +165,7 @@ export class ObsConnection {
 	async #open(): Promise<void> {
 		const url = obsWebSocketUrl(this.#config);
 		const attempt = this.#client.connect(url, this.#config.password, {
-			// Recording and scenes still poll on demand. Subscribe to Outputs/Scenes
-			// when the SSE milestone starts listening for RecordStateChanged.
-			eventSubscriptions: EventSubscription.None
+			eventSubscriptions: OBS_EVENT_SUBSCRIPTIONS
 		});
 		const timeoutError = new ObsConnectionError('OBS_UNAVAILABLE', 'Timed out connecting to OBS.');
 		let timer: ReturnType<typeof setTimeout> | undefined;
@@ -146,6 +177,7 @@ export class ObsConnection {
 			const { obsWebSocketVersion, negotiatedRpcVersion } = await Promise.race([attempt, timeout]);
 			this.#sessionActive = true;
 			this.#lastError = null;
+			this.#notifyStatus();
 			console.info(
 				`[obs] Connected to ${url} (obs-websocket ${obsWebSocketVersion}, RPC ${negotiatedRpcVersion})`
 			);
@@ -176,7 +208,15 @@ export class ObsConnection {
 		}
 		this.#sessionActive = false;
 		this.#lastError = closeCodeToErrorCode(error.code);
+		this.#notifyStatus();
 		console.warn(`[obs] Connection closed: ${describeCause(error)}`);
+	}
+
+	#notifyStatus(): void {
+		const status = this.status;
+		for (const listener of this.#statusListeners) {
+			listener(status);
+		}
 	}
 }
 

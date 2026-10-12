@@ -93,6 +93,16 @@ describe('RecordingPanel', () => {
 		);
 	});
 
+	it('does not advance the elapsed clock while recording is paused', async () => {
+		vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] });
+		vi.setSystemTime(new Date('2026-10-12T00:00:00.000Z'));
+		renderPanel({ recording: { ...live, paused: true, durationMs: 5_000 } });
+
+		expect(screen.getByRole('time').textContent).toBe('00:00:05');
+		await vi.advanceTimersByTimeAsync(2_000);
+		expect(screen.getByRole('time').textContent).toBe('00:00:05');
+	});
+
 	it('calls startRecording and invokes success callbacks after start', async () => {
 		const next = { ...live, durationMs: 0 };
 		vi.mocked(startRecording).mockResolvedValue(next);
@@ -192,5 +202,52 @@ describe('RecordingPanel', () => {
 		});
 
 		expect(screen.getByRole('time').textContent).toBe('00:00:06');
+	});
+
+	it('keeps the last live duration when an SSE stop reports durationMs 0', async () => {
+		vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] });
+		vi.setSystemTime(new Date('2026-10-12T00:00:00.000Z'));
+
+		const { rerender, onrecording, onaction } = renderPanel({ recording: live });
+		expect(screen.getByRole('time').textContent).toBe('00:00:05');
+
+		await vi.advanceTimersByTimeAsync(1_000);
+		expect(screen.getByRole('time').textContent).toBe('00:00:06');
+
+		const stoppedViaSse = { ...idle, fileName: 'take.mkv', durationMs: 0 };
+		await rerender({
+			recording: stoppedViaSse,
+			loading: false,
+			error: null,
+			onrecording,
+			onaction
+		});
+
+		expect(screen.getByRole('time').textContent).toBe('00:00:06');
+		expect(screen.getByText('take.mkv')).toBeTruthy();
+		expect(stopRecording).not.toHaveBeenCalled();
+	});
+
+	it('keeps the paused duration when an SSE stop reports durationMs 0', async () => {
+		vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] });
+		vi.setSystemTime(new Date('2026-10-12T00:00:00.000Z'));
+
+		const { rerender, onrecording, onaction } = renderPanel({
+			recording: { ...live, paused: true, durationMs: 5_000 }
+		});
+		expect(screen.getByRole('time').textContent).toBe('00:00:05');
+
+		await vi.advanceTimersByTimeAsync(2_000);
+		expect(screen.getByRole('time').textContent).toBe('00:00:05');
+
+		await rerender({
+			recording: { ...idle, fileName: 'paused.mkv', durationMs: 0 },
+			loading: false,
+			error: null,
+			onrecording,
+			onaction
+		});
+
+		expect(screen.getByRole('time').textContent).toBe('00:00:05');
 	});
 });

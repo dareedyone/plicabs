@@ -95,7 +95,7 @@ afterEach(() => {
 });
 
 describe('getScenes', () => {
-	it('returns scene names in OBS order and the current program scene', async () => {
+	it('returns scene names in OBS Studio order and the current program scene', async () => {
 		const stub = useConnection(['Screen', 'Cam', 'Overlay'], 'Cam');
 
 		const list = await getScenes();
@@ -103,11 +103,20 @@ describe('getScenes', () => {
 		expect(stub.connect).toHaveBeenCalledTimes(1);
 		expect(stub.call).toHaveBeenCalledWith('GetSceneList', undefined);
 		expect(list).toEqual({
-			scenes: ['Screen', 'Cam', 'Overlay'],
+			scenes: ['Overlay', 'Cam', 'Screen'],
 			currentScene: 'Cam'
 		});
 		expect(JSON.stringify(list)).not.toContain('program-uuid');
 		expect(JSON.stringify(list)).not.toContain('preview');
+	});
+
+	it('preserves OBS Studio order from a bottom-to-top GetSceneList array', async () => {
+		useConnection(['Bottom', 'Middle', 'Top'], 'Middle');
+
+		await expect(getScenes()).resolves.toEqual({
+			scenes: ['Top', 'Middle', 'Bottom'],
+			currentScene: 'Middle'
+		});
 	});
 
 	it('skips scene entries whose sceneName is not a string', async () => {
@@ -130,7 +139,7 @@ describe('getScenes', () => {
 		});
 
 		expect(await getScenes()).toEqual({
-			scenes: ['Cam', 'Screen'],
+			scenes: ['Screen', 'Cam'],
 			currentScene: 'Cam'
 		});
 	});
@@ -174,7 +183,7 @@ describe('switchScene', () => {
 			'GetCurrentProgramScene'
 		]);
 		expect(stub.call).toHaveBeenCalledWith('SetCurrentProgramScene', { sceneName: 'Screen' });
-		expect(list).toEqual({ scenes: ['Cam', 'Screen'], currentScene: 'Screen' });
+		expect(list).toEqual({ scenes: ['Screen', 'Cam'], currentScene: 'Screen' });
 	});
 
 	it('rejects an unknown scene without sending SetCurrentProgramScene', async () => {

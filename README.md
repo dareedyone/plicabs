@@ -4,7 +4,7 @@ A small web dashboard for controlling a locally running [OBS Studio](https://obs
 
 Built with SvelteKit (Svelte 5), TypeScript, and Tailwind CSS. The browser talks only to the app's own HTTP API; a server-only module talks to OBS over OBS WebSocket. OBS credentials never reach the browser.
 
-> **Status:** in development. The server-side OBS APIs and a functional dashboard UI are in place. Real-time updates (SSE) are not implemented yet.
+> **Status:** in development. The server-side OBS APIs, dashboard UI, and SSE real-time updates are in place. Docker is not implemented yet.
 
 ## Requirements
 
@@ -62,6 +62,7 @@ The values are validated when the app starts. If `OBS_HOST` or `OBS_PORT` is mis
 | `POST` | `/api/obs/recording/stop`  | Stop recording. Connects if needed.                                            |
 | `GET`  | `/api/obs/scenes`          | Available scenes and the current program scene. Connects if needed.            |
 | `POST` | `/api/obs/scenes/switch`   | Switch the program scene. Connects if needed.                                  |
+| `GET`  | `/api/obs/events`          | SSE stream of connection, recording, and scene updates. Connects if needed.    |
 
 ### `GET /api/obs/status`
 
@@ -100,22 +101,28 @@ The endpoint only reports what the server already knows. It never opens a connec
 | `durationMs` | Recording duration in milliseconds                                                              |
 | `fileName`   | Basename of the saved file after a successful stop. `null` until OBS reports a path (see below) |
 
-`GetRecordStatus` does not include a filename. After stop, `fileName` comes from `StopRecord`'s `outputPath`; only the last path segment is returned, so a local username in the folder path never reaches the browser. While recording, `fileName` stays `null` until a later milestone subscribes to `RecordFileChanged`.
+`GetRecordStatus` does not include a filename. After stop, HTTP `fileName` comes from `StopRecord`'s `outputPath`; only the last path segment is returned, so a local username in the folder path never reaches the browser. While recording, HTTP GET still returns `fileName: null`. The SSE stream may include a cached basename from `RecordFileChanged`. If the app attaches after recording has already started, that event may have been missed and `fileName` stays `null` until a later file change or stop.
 
 ### Scenes
 
-`GET /api/obs/scenes` and `POST /api/obs/scenes/switch` return the same JSON object after talking to OBS. The list is returned in OBS order. Switch reads `GetSceneList` first, sends `SetCurrentProgramScene` only if the exact name exists and is not already current, then reads `GetCurrentProgramScene` to confirm. A switch to the current scene is `409`, not a silent success. POST clients should send `Content-Type: application/json` (SvelteKit treats a missing type as a cross-site form and answers `403`).
+`GET /api/obs/scenes` and `POST /api/obs/scenes/switch` return the same JSON object after talking to OBS. The list is returned in OBS Studio scene-dock order (top to bottom). `GetSceneList` itself is bottom-to-top, so the service reverses that array once; HTTP, SSE, and the dashboard do not sort or reorder again. Switch reads `GetSceneList` first, sends `SetCurrentProgramScene` only if the exact name exists and is not already current, then reads `GetCurrentProgramScene` to confirm. A switch to the current scene is `409`, not a silent success. POST clients should send `Content-Type: application/json` (SvelteKit treats a missing type as a cross-site form and answers `403`).
 
 ```json
 { "scenes": ["Cam", "Screen"], "currentScene": "Cam" }
 ```
 
-| Field          | Meaning                                               |
-| -------------- | ----------------------------------------------------- |
-| `scenes`       | Scene names, in the order OBS returned them           |
-| `currentScene` | Current program scene name, or `null` if OBS has none |
+| Field          | Meaning                                                     |
+| -------------- | ----------------------------------------------------------- |
+| `scenes`       | Scene names, in OBS Studio scene-dock order (top to bottom) |
+| `currentScene` | Current program scene name, or `null` if OBS has none       |
 
 Only names are returned. UUIDs, preview-scene fields, and raw OBS scene objects never reach the browser.
+
+### Real-time updates
+
+`GET /api/obs/events` is a Server-Sent Events stream (`text/event-stream`). The dashboard opens it with `EventSource` after the initial HTTP GETs. The first frame is `snapshot`; later frames are `connection`, `recording`, or `scenes`, using the same JSON shapes as the HTTP APIs. A comment keepalive (`: ping`) is sent about every 20 seconds.
+
+The stream stays open when OBS is unavailable. One shared OBS WebSocket serves every browser; the server reconnects with 1s / 2s / 5s backoff while at least one SSE client is connected, and does not retry a rejected password (`OBS_AUTH_FAILED`). Recording duration is refreshed from `GetRecordStatus` about once per second while recording. The browser clock only interpolates between those snapshots, and it does not advance while OBS reports the recording as paused. After stop, if OBS reports `durationMs: 0`, the dashboard keeps the last elapsed time from this page session (dashboard stop or OBS-side stop).
 
 ### Action errors
 
@@ -140,11 +147,12 @@ src/
   app.d.ts                 App-wide type declarations
   env.ts                   Declares and validates the OBS environment variables
   lib/                     Code shared between server and browser (imported via #lib)
-    dashboard/             Browser dashboard client, elapsed time, and controls
+    dashboard/             Browser dashboard client, elapsed time, controls, and SSE apply helpers
     components/            Dashboard panels and colocated `*.svelte.spec.ts` tests
     server/obs/            Server-only OBS integration; SvelteKit blocks browser imports
       config.ts            Validators for the OBS host, port and password
       connection.ts        Shared OBS WebSocket connection (lazy, one attempt at a time)
+      events.ts            In-process hub: OBS events, SSE fan-out, reconnect, duration poll
       errors.ts            Shared request-error codes for recording and scenes
       recording.ts         Start/stop/status using the shared connection
       scenes.ts            List/switch using the shared connection
@@ -170,6 +178,9 @@ src/
         +server.ts         GET /api/obs/scenes
         switch/+server.ts  POST /api/obs/scenes/switch
         scenes.spec.ts     Route tests with a mocked scene service
+      events/
+        +server.ts         GET /api/obs/events
+        events.spec.ts     SSE route tests with a mocked event hub
 static/                    Files served as-is
 vite.config.ts             Vite, SvelteKit (adapter-node), and Vitest configuration
 eslint.config.js           ESLint configuration

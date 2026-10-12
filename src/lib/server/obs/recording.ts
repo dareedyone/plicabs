@@ -30,8 +30,54 @@ export interface RecordingStatus {
 	fileName: string | null;
 }
 
+type CachedFile = { name: string; live: boolean };
+
+let cachedFile: CachedFile | null = null;
+
+/** Last path segment only; the full output path can include the local username. */
+export function fileNameOf(outputPath: string | undefined): string | null {
+	if (!outputPath) {
+		return null;
+	}
+	const name = outputPath.replace(/^.*[/\\]/, '');
+	return name || null;
+}
+
+/**
+ * Remember a path from `RecordFileChanged` (`live: true`) or from stop
+ * (`StopRecord` / `RecordStateChanged`, `live: false`).
+ */
+export function rememberRecordingFile(path: unknown, live: boolean): string | null {
+	const name = fileNameOf(typeof path === 'string' ? path : undefined);
+	if (name) {
+		cachedFile = { name, live };
+	}
+	return name;
+}
+
+/** A new recording started. Drop a leftover stopped-file name; keep one already marked live. */
+export function onRecordingBecameActive(): void {
+	if (!cachedFile?.live) {
+		cachedFile = null;
+	}
+}
+
+export function cachedRecordingFile(): string | null {
+	return cachedFile?.name ?? null;
+}
+
+export function resetRecordingFileCache(): void {
+	cachedFile = null;
+}
+
 export async function getRecordingStatus(): Promise<RecordingStatus> {
 	return readStatus(getObsConnection());
+}
+
+/** Like GET status, but includes the cached basename when OBS has reported a path. */
+export async function getLiveRecordingStatus(): Promise<RecordingStatus> {
+	const status = await readStatus(getObsConnection());
+	return { ...status, fileName: cachedFile?.name ?? status.fileName };
 }
 
 export async function startRecording(): Promise<RecordingStatus> {
@@ -57,10 +103,11 @@ async function changeRecording(action: 'start' | 'stop'): Promise<RecordingStatu
 	let fileName: string | null = null;
 	try {
 		if (wantActive) {
+			onRecordingBecameActive();
 			await connection.request('StartRecord');
 		} else {
 			const { outputPath } = await connection.request('StopRecord');
-			fileName = fileNameOf(outputPath);
+			fileName = rememberRecordingFile(outputPath, false);
 		}
 	} catch (cause) {
 		throw toRecordingError(cause, requestType);
@@ -135,13 +182,4 @@ function toRecordingError(cause: unknown, requestType: string): Error {
 			cause
 		}
 	);
-}
-
-/** Last path segment only; the full output path can include the local username. */
-function fileNameOf(outputPath: string | undefined): string | null {
-	if (!outputPath) {
-		return null;
-	}
-	const name = outputPath.replace(/^.*[/\\]/, '');
-	return name || null;
 }

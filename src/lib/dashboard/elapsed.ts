@@ -7,6 +7,13 @@ export function formatElapsed(ms: number): string {
 	return `${pad(hours)}:${pad(minutes)}:${pad(seconds)}`;
 }
 
+/** Advance the local clock only while OBS is recording and not paused. */
+export function isLiveClock<T extends { active: boolean; paused: boolean }>(
+	recording: T | null
+): recording is T & { active: true; paused: false } {
+	return Boolean(recording?.active && !recording.paused);
+}
+
 /** Live elapsed time from an API duration snapshot and the wall clock since that snapshot. */
 export function liveDurationMs(baseMs: number, since: number, now: number): number {
 	const base = Number.isFinite(baseMs) && baseMs > 0 ? baseMs : 0;
@@ -15,8 +22,9 @@ export function liveDurationMs(baseMs: number, since: number, now: number): numb
 }
 
 /**
- * Prefer the stop response duration when OBS reports one; otherwise keep the
- * last live counter from this page session.
+ * Prefer a stopped-state duration when OBS reports one; otherwise keep the
+ * last positive duration already observed in this page session. A zero
+ * duration after stop is not treated as the final length.
  */
 export function retainedStopDurationMs(stopDurationMs: number, lastLiveMs: number): number {
 	if (Number.isFinite(stopDurationMs) && stopDurationMs > 0) {

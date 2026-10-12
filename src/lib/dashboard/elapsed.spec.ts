@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatElapsed, liveDurationMs, retainedStopDurationMs } from './elapsed';
+import { formatElapsed, isLiveClock, liveDurationMs, retainedStopDurationMs } from './elapsed';
 
 describe('formatElapsed', () => {
 	it('formats a duration as HH:MM:SS', () => {
@@ -12,6 +12,15 @@ describe('formatElapsed', () => {
 	it('does not invent time from invalid values', () => {
 		expect(formatElapsed(-12)).toBe('00:00:00');
 		expect(formatElapsed(Number.NaN)).toBe('00:00:00');
+	});
+});
+
+describe('isLiveClock', () => {
+	it('advances only while recording and not paused', () => {
+		expect(isLiveClock({ active: true, paused: false })).toBe(true);
+		expect(isLiveClock({ active: true, paused: true })).toBe(false);
+		expect(isLiveClock({ active: false, paused: false })).toBe(false);
+		expect(isLiveClock(null)).toBe(false);
 	});
 });
 
@@ -32,5 +41,10 @@ describe('retainedStopDurationMs', () => {
 
 	it('keeps the last live counter when the stop response duration is 0', () => {
 		expect(retainedStopDurationMs(0, 4_800)).toBe(4_800);
+	});
+
+	it('does not treat a zero stopped-state duration as the final length', () => {
+		expect(retainedStopDurationMs(0, 6_250)).toBe(6_250);
+		expect(retainedStopDurationMs(Number.NaN, 6_250)).toBe(6_250);
 	});
 });

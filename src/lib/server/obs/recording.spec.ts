@@ -1,7 +1,17 @@
 import OBSWebSocket, { OBSWebSocketError, type OBSResponseTypes } from 'obs-websocket-js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { getObsConnection, ObsConnection, ObsConnectionError } from './connection';
-import { getRecordingStatus, startRecording, stopRecording } from './recording';
+import {
+	cachedRecordingFile,
+	fileNameOf,
+	getLiveRecordingStatus,
+	getRecordingStatus,
+	onRecordingBecameActive,
+	rememberRecordingFile,
+	resetRecordingFileCache,
+	startRecording,
+	stopRecording
+} from './recording';
 
 vi.mock('$app/env/private', () => ({
 	OBS_HOST: '127.0.0.1',
@@ -81,6 +91,7 @@ afterEach(() => {
 	vi.mocked(getObsConnection).mockReset();
 	vi.restoreAllMocks();
 	delete (globalThis as { __obsConnection?: ObsConnection }).__obsConnection;
+	resetRecordingFileCache();
 });
 
 describe('getRecordingStatus', () => {
@@ -269,5 +280,38 @@ describe('stopRecording', () => {
 		expect(raw).not.toContain(PASSWORD);
 		expect(raw).not.toContain('env-test-password');
 		expect(raw).not.toContain('/Users/demo');
+	});
+});
+
+describe('recording filename cache', () => {
+	it('keeps only the basename of a live or stopped path', () => {
+		expect(fileNameOf('/Users/demo/Movies/clip.mkv')).toBe('clip.mkv');
+		expect(rememberRecordingFile('/Users/demo/Movies/live.mkv', true)).toBe('live.mkv');
+		expect(cachedRecordingFile()).toBe('live.mkv');
+		expect(rememberRecordingFile('/Users/demo/Movies/done.mkv', false)).toBe('done.mkv');
+		expect(cachedRecordingFile()).toBe('done.mkv');
+	});
+
+	it('clears a leftover stopped name when a new recording becomes active', () => {
+		rememberRecordingFile('/tmp/old.mkv', false);
+		onRecordingBecameActive();
+		expect(cachedRecordingFile()).toBeNull();
+	});
+
+	it('keeps a live name if RecordFileChanged arrived before RecordStateChanged', () => {
+		rememberRecordingFile('/tmp/current.mkv', true);
+		onRecordingBecameActive();
+		expect(cachedRecordingFile()).toBe('current.mkv');
+	});
+
+	it('includes the cached basename on the live status used by SSE', async () => {
+		useConnection(true);
+		rememberRecordingFile('/Users/demo/Movies/live.mkv', true);
+
+		await expect(getLiveRecordingStatus()).resolves.toMatchObject({
+			active: true,
+			fileName: 'live.mkv'
+		});
+		await expect(getRecordingStatus()).resolves.toMatchObject({ fileName: null });
 	});
 });
