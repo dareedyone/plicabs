@@ -4,7 +4,7 @@ A small web dashboard for controlling a locally running [OBS Studio](https://obs
 
 Built with SvelteKit (Svelte 5), TypeScript, and Tailwind CSS. The browser talks only to the app's own HTTP API; a server-only module talks to OBS over OBS WebSocket. OBS credentials never reach the browser.
 
-> **Status:** in development. The server-side OBS connection, connection-status, recording, and scene list/switch APIs are in place. The dashboard UI is not implemented yet.
+> **Status:** in development. The server-side OBS APIs and a functional dashboard UI are in place. Real-time updates (SSE) are not implemented yet.
 
 ## Requirements
 
@@ -140,6 +140,8 @@ src/
   app.d.ts                 App-wide type declarations
   env.ts                   Declares and validates the OBS environment variables
   lib/                     Code shared between server and browser (imported via #lib)
+    dashboard/             Browser dashboard client, elapsed time, and controls
+    components/            Dashboard panels and colocated `*.svelte.spec.ts` tests
     server/obs/            Server-only OBS integration; SvelteKit blocks browser imports
       config.ts            Validators for the OBS host, port and password
       connection.ts        Shared OBS WebSocket connection (lazy, one attempt at a time)
@@ -149,7 +151,7 @@ src/
       *.spec.ts            Unit tests with a stubbed OBS client
   routes/
     +layout.svelte         Global layout; loads the Tailwind stylesheet
-    +page.svelte           Dashboard page (placeholder)
+    +page.svelte           Dashboard page
     layout.css             Tailwind entry point
     api/health/
       +server.ts           GET /api/health
@@ -178,4 +180,4 @@ tsconfig.json              TypeScript configuration (extends SvelteKit's generat
 
 ## Testing
 
-`npm test` runs the Vitest suite. The OBS tests replace the WebSocket client's network methods with stubs, so they don't need OBS Studio to be running. They can't show that the app works with a real OBS instance; that needs a manual check against OBS.
+`npm test` runs two Vitest projects: `server` (Node) for OBS services, API routes, and dashboard helpers, and `client` (jsdom) for the dashboard Svelte panels. The OBS tests replace the WebSocket client's network methods with stubs, so they don't need OBS Studio to be running. They can't show that the app works with a real OBS instance; that needs a manual check against OBS.

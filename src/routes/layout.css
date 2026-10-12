@@ -1,1 +1,11 @@
 @import 'tailwindcss';
+
+html {
+	color-scheme: dark;
+}
+
+body {
+	margin: 0;
+	background: #09090b;
+	color: #fafafa;
+}
