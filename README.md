@@ -33,9 +33,43 @@ cp .env.example .env   # then edit; see Configuration
 | Check formatting        | `npm run format:check`                                    |
 | Run tests once          | `npm test`                                                |
 | Run tests in watch mode | `npm run test:watch`                                      |
+| Browser E2E tests       | `npm run test:e2e`                                        |
+| Real-OBS integration    | `npm run test:integration`                                |
 | Production build        | `npm run build`                                           |
 | Run production build    | `npm start` (http://localhost:3000; set `PORT` to change) |
 | All checks + build      | `npm run verify`                                          |
+
+## Browser and integration tests
+
+The normal project verification remains `npm test`, which still runs the Vitest suite. The browser and real-OBS checks are kept separate.
+
+### Playwright E2E tests
+
+```sh
+npm install
+npx playwright install chromium
+npm run test:e2e
+```
+
+`npm run test:e2e` runs Chromium-only Playwright tests against a local Vite dev server. The page loads with mocked HTTP responses and a small EventSource test double, so the browser flow is checked without a real OBS instance. This suite is not part of `npm test` and not part of `npm run verify`.
+
+### Real-OBS integration tests
+
+```sh
+BASE_URL=http://127.0.0.1:5173 npm run test:integration
+```
+
+The integration suite is a separate Vitest config and is intentionally excluded from `npm test` and `npm run verify`. It must target an already-running app and an already-running OBS Studio instance. It does not start or stop the application or OBS automatically.
+
+Use the app's normal environment configuration for OBS access. The tests never read `OBS_PASSWORD`, never embed credentials in source files or command strings, and never require them to be known by the test runner.
+
+Set `BASE_URL` to the running app URL. For a local development server the default is `http://127.0.0.1:5173`. For a Docker or production deployment, set it explicitly to the host and port of that environment, for example `BASE_URL=http://127.0.0.1:3000` or `BASE_URL=http://host.docker.internal:3000`.
+
+Before a smoke test, the suite checks the health endpoint first, confirms the app responds successfully, and then verifies the OBS connection and SSE flow. If the app or OBS is unavailable, the suite is reported as skipped or blocked rather than passed.
+
+> Warning: the real-OBS integration tests can mutate the actual OBS scene and start or stop a recording. They avoid changing the user's OBS configuration automatically and skip safe cleanup if the original state cannot be determined.
+
+The suite is intended for explicit manual validation against a local OBS instance, not for normal CI or local `verify` runs.
 
 ## Configuration
 
