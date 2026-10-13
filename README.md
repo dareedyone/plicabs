@@ -1,99 +1,139 @@
 # OBS Control App
 
-A small web dashboard for controlling a locally running [OBS Studio](https://obsproject.com/) instance: start and stop recording, see the current recording file, and switch scenes.
+A SvelteKit dashboard for controlling a locally running [OBS Studio](https://obsproject.com/) instance. The app lets you check connection state, switch scenes, start or stop recording, and follow live updates via SSE without exposing OBS credentials to the browser.
 
-Built with SvelteKit (Svelte 5), TypeScript, and Tailwind CSS. The browser talks only to the app's own HTTP API; a server-only module talks to OBS over OBS WebSocket. OBS credentials never reach the browser.
+Built with Svelte 5, TypeScript, Tailwind CSS, and a server-only OBS WebSocket layer. Browser code never connects to OBS directly; all OBS traffic is routed through the app’s HTTP API and server-side service layer.
 
-> **Status:** in development. The server-side OBS APIs, dashboard UI, SSE real-time updates, and a production Docker image are in place.
+## Overview
+
+The assignment targets a practical local-control workflow:
+
+- browse a simple dashboard for OBS state and controls
+- fetch snapshot data from the app API
+- subscribe to live updates over Server-Sent Events
+- start or stop recording and switch the active scene with safety checks
+- run in a production-style Node container without exposing secrets
 
 ## Requirements
 
-- Node.js 24 LTS is recommended (pinned in `.nvmrc`). The supported range is `^22.17.0 || >=24`, declared in `package.json` `engines` and enforced by `engine-strict` in `.npmrc`. Node 23 is not supported.
-- npm, as bundled with your Node installation. The project has been installed and verified with npm 12.2.0.
-- OBS Studio 28+ with its WebSocket server enabled (OBS > Tools > WebSocket Server Settings). Not needed for the automated tests or the build.
+- Node.js 22.17+ or 24 LTS
+- npm (verified with npm 12.x)
+- OBS Studio 28+ with the WebSocket server enabled
+- access to the OBS WebSocket host and port configured for the app
 
-## Setup
+## Installation
 
 ```sh
-nvm use                # or install Node 24 another way
-npm install
-cp .env.example .env   # then edit; see Configuration
+npm ci
+cp .env.example .env
 ```
 
-`tsconfig.json` extends `node_modules/$app/tsconfig.json`, which SvelteKit generates. npm can delete it when installing or pruning packages, so if the editor then reports `File '$app/tsconfig' not found`, run `npm run prepare` to regenerate it and restart the TypeScript server. In VS Code or Cursor, also choose "Use Workspace Version" when prompted, because SvelteKit 3 requires TypeScript 6.
+Then update the values in `.env` to match your OBS instance.
 
-## Commands
+If the editor reports a missing `$app/tsconfig` reference, regenerate the generated SvelteKit files:
 
-| Task                    | Command                                                   |
-| ----------------------- | --------------------------------------------------------- |
-| Development server      | `npm run dev` (http://localhost:5173)                     |
-| Type check              | `npm run check`                                           |
-| Lint                    | `npm run lint`                                            |
-| Format files            | `npm run format`                                          |
-| Check formatting        | `npm run format:check`                                    |
-| Run tests once          | `npm test`                                                |
-| Run tests in watch mode | `npm run test:watch`                                      |
-| Browser E2E tests       | `npm run test:e2e`                                        |
-| Real-OBS integration    | `npm run test:integration`                                |
-| Production build        | `npm run build`                                           |
-| Run production build    | `npm start` (http://localhost:3000; set `PORT` to change) |
-| All checks + build      | `npm run verify`                                          |
+```sh
+npm run prepare
+```
 
-## Browser and integration tests
+## Configuration
 
-The normal project verification remains `npm test`, which still runs the Vitest suite. The browser and real-OBS checks are kept separate.
+The app reads OBS settings from environment variables at runtime. These values are validated in `src/env.ts` and remain server-only.
+
+| Variable       | Required | Purpose                                               | Example     |
+| -------------- | -------- | ----------------------------------------------------- | ----------- |
+| `OBS_HOST`     | Yes      | OBS hostname or IP address without a protocol or port | `127.0.0.1` |
+| `OBS_PORT`     | Yes      | OBS WebSocket port                                    | `4455`      |
+| `OBS_PASSWORD` | No       | OBS WebSocket password if authentication is enabled   | `secret`    |
+
+Example `.env`:
+
+```env
+OBS_HOST=127.0.0.1
+OBS_PORT=4455
+OBS_PASSWORD=
+```
+
+If `OBS_HOST` or `OBS_PORT` is invalid, the app fails fast with a clear startup error. The values are never exposed to the browser. `npm run build` does not require them to be set.
+
+In development, `npm run dev` and `npm run preview` load `.env` automatically. In production, `npm start` passes `--env-file-if-exists=.env` to Node when the file is present. Environment variables already set in the shell or container are also used. Do not commit `.env` files or bake secrets into the Docker image.
+
+## Local development
+
+```sh
+npm run dev
+```
+
+The app runs at `http://localhost:5173` by default.
+
+Production mode:
+
+```sh
+npm run build
+npm start
+```
+
+The production server listens on `http://localhost:3000` by default and uses the same environment variables at runtime.
+
+## Testing
+
+The project keeps the test suites intentionally separated:
+
+- `npm test` runs the normal Vitest unit suite
+- `npm run test:e2e` runs the browser-level Playwright suite against a mocked browser harness
+- `npm run test:integration` runs live OBS integration tests against an already-running app and OBS instance
+- `npm run verify` does not include the live integration suite
+
+### Unit tests
+
+```sh
+npm test
+```
+
+This is the default local verification suite for the application logic, route handlers, and browser-side helper code.
 
 ### Playwright E2E tests
 
 ```sh
-npm install
 npx playwright install chromium
 npm run test:e2e
 ```
 
-`npm run test:e2e` runs Chromium-only Playwright tests against a local Vite dev server. The page loads with mocked HTTP responses and a small EventSource test double, so the browser flow is checked without a real OBS instance. This suite is not part of `npm test` and not part of `npm run verify`.
+These browser tests use a local Vite dev server and mocked HTTP/SSE responses. They validate the dashboard flow without requiring a real OBS instance.
 
 ### Real-OBS integration tests
 
 ```sh
-BASE_URL=http://127.0.0.1:5173 npm run test:integration
+BASE_URL=http://localhost:5173 npm run test:integration
 ```
 
-The integration suite is a separate Vitest config and is intentionally excluded from `npm test` and `npm run verify`. It must target an already-running app and an already-running OBS Studio instance. It does not start or stop the application or OBS automatically.
+This suite is separate from `npm test` and `npm run verify` and must target an already-running app and a reachable OBS WebSocket server. It checks health, SSE behaviour, scene switching, and recording state against real OBS.
 
-Use the app's normal environment configuration for OBS access. The tests never read `OBS_PASSWORD`, never embed credentials in source files or command strings, and never require them to be known by the test runner.
+The live integration suite has explicit safety guards:
 
-Set `BASE_URL` to the running app URL. For a local development server the default is `http://127.0.0.1:5173`. For a Docker or production deployment, set it explicitly to the host and port of that environment, for example `BASE_URL=http://127.0.0.1:3000` or `BASE_URL=http://host.docker.internal:3000`.
+- it restores the original scene after a successful scene change
+- it refuses to stop a recording unless the test started it
+- it reports a clear skip when the application or OBS is unavailable instead of silently passing
 
-Before a smoke test, the suite checks the health endpoint first, confirms the app responds successfully, and then verifies the OBS connection and SSE flow. If the app or OBS is unavailable, the suite is reported as skipped or blocked rather than passed.
+If the app or OBS is unavailable, the suite is reported as skipped or blocked rather than passed.
 
-> Warning: the real-OBS integration tests can mutate the actual OBS scene and start or stop a recording. They avoid changing the user's OBS configuration automatically and skip safe cleanup if the original state cannot be determined.
+### Full verification
 
-The suite is intended for explicit manual validation against a local OBS instance, not for normal CI or local `verify` runs.
+```sh
+npm run verify
+```
 
-## Configuration
-
-OBS connection settings come from environment variables. They are declared and validated in `src/env.ts` and are readable only by server code. They are never sent to the browser.
-
-| Variable       | Required | Purpose                                                                   | Example     |
-| -------------- | -------- | ------------------------------------------------------------------------- | ----------- |
-| `OBS_HOST`     | Yes      | Hostname or IP address of the machine running OBS (no protocol or port)   | `127.0.0.1` |
-| `OBS_PORT`     | Yes      | OBS WebSocket port, 1–65535                                               | `4455`      |
-| `OBS_PASSWORD` | No       | OBS WebSocket password. Leave empty if authentication is disabled in OBS. | —           |
-
-The values are validated when the app starts. If `OBS_HOST` or `OBS_PORT` is missing or invalid, `npm start` exits and `npm run dev` answers every request with an error. Either way, the terminal shows which variable is wrong; the error never includes the values themselves. `npm run build` does not need these variables.
-
-`npm run dev` and `npm run preview` load `.env` automatically. A production build does not, so `npm start` passes `--env-file-if-exists=.env` to Node. Variables already set in the environment (e.g. by Docker `-e`) are also used. Do not copy `.env` into the image.
+This is the standard non-live verification path for the project. It runs type-checking, linting, formatting checks, the Vitest suite, and the production build, but it intentionally excludes the live OBS integration suite.
 
 ## Docker
 
-The `Dockerfile` builds a production `adapter-node` server (`node:24-bookworm-slim`, one process). OBS settings are passed at **run** time. They are never build arguments and are never copied from `.env`.
+The project includes a production Docker image built from the SvelteKit `adapter-node` output.
 
 ```sh
 docker build -t obs-control-app .
 ```
 
-On macOS or Docker Desktop, the container reaches OBS on the host with `host.docker.internal`:
+Run it with OBS settings provided at runtime:
 
 ```sh
 docker run --rm -p 3000:3000 \
@@ -103,9 +143,7 @@ docker run --rm -p 3000:3000 \
   obs-control-app
 ```
 
-`OBS_PASSWORD` is taken from your shell if it is already set. Leave it unset or empty if OBS has authentication disabled. Do not put the password in the `Dockerfile` or in `docker build`.
-
-On Linux, Docker does not define `host.docker.internal` unless you add it:
+On Linux, add the Docker host gateway explicitly if needed:
 
 ```sh
 docker run --rm -p 3000:3000 \
@@ -116,41 +154,39 @@ docker run --rm -p 3000:3000 \
   obs-control-app
 ```
 
-Then open http://localhost:3000. `GET /api/health` is `{ "status": "ok" }` and does not contact OBS.
+The container serves the built app on port 3000. `GET /api/health` returns `{ "status": "ok" }` and does not contact OBS. The image intentionally does not bake secrets into the build or include local `.env` files. Docker networking to the host requires `host.docker.internal` or `--add-host=host.docker.internal:host-gateway` depending on the platform.
 
-`localhost` inside the container is the container, not the Mac. OBS WebSocket must accept connections from Docker’s bridge. If the dashboard stays on `OBS_UNAVAILABLE`, check that the WebSocket server is enabled and not bound only to `127.0.0.1`. Do not set `IDLE_TIMEOUT`; adapter-node would exit while an SSE client is idle.
+Do not set `IDLE_TIMEOUT` for this application. The adapter’s idle timeout can terminate the server process and interrupt long-lived SSE connections.
 
-## API
+## API overview
 
-| Method | Path                       | Description                                                                    |
-| ------ | -------------------------- | ------------------------------------------------------------------------------ |
-| `GET`  | `/api/health`              | App liveness check. Returns `{ "status": "ok" }`. Does not contact OBS.        |
-| `GET`  | `/api/obs/status`          | Current OBS connection status (below). Does not contact OBS.                   |
-| `GET`  | `/api/obs/recording`       | Current OBS recording state. Connects if needed, then calls `GetRecordStatus`. |
-| `POST` | `/api/obs/recording/start` | Start recording. Connects if needed.                                           |
-| `POST` | `/api/obs/recording/stop`  | Stop recording. Connects if needed.                                            |
-| `GET`  | `/api/obs/scenes`          | Available scenes and the current program scene. Connects if needed.            |
-| `POST` | `/api/obs/scenes/switch`   | Switch the program scene. Connects if needed.                                  |
-| `GET`  | `/api/obs/events`          | SSE stream of connection, recording, and scene updates. Connects if needed.    |
+| Method | Path                       | Description                                      |
+| ------ | -------------------------- | ------------------------------------------------ |
+| `GET`  | `/api/health`              | App liveness check; returns `{ "status": "ok" }` |
+| `GET`  | `/api/obs/status`          | Current OBS connection state and last error      |
+| `GET`  | `/api/obs/recording`       | Recording state plus duration metadata           |
+| `POST` | `/api/obs/recording/start` | Start OBS recording                              |
+| `POST` | `/api/obs/recording/stop`  | Stop OBS recording                               |
+| `GET`  | `/api/obs/scenes`          | Scene list and current program scene             |
+| `POST` | `/api/obs/scenes/switch`   | Switch the active scene                          |
+| `GET`  | `/api/obs/events`          | SSE stream of snapshot and live state updates    |
 
-### `GET /api/obs/status`
+### Connection status
 
-Always responds `200` with JSON. Being disconnected from OBS is a normal status, not an HTTP error.
+`GET /api/obs/status` always returns JSON. A disconnected OBS state is an expected runtime state, not an HTTP error.
 
 ```json
-{ "state": "disconnected", "lastError": "OBS_UNAVAILABLE" }
+{ "state": "disconnected", "lastError": null }
 ```
 
-| Field       | Values                                           | Meaning                                                                                             |
-| ----------- | ------------------------------------------------ | --------------------------------------------------------------------------------------------------- |
-| `state`     | `"connected"`, `"connecting"`, `"disconnected"`  | The server's connection to OBS right now                                                            |
-| `lastError` | `null`, `"OBS_UNAVAILABLE"`, `"OBS_AUTH_FAILED"` | Why the last attempt failed or the last session ended. `null` after a success or before any attempt |
+Possible values:
 
-The endpoint only reports what the server already knows. It never opens a connection, so before anything has tried to connect it returns `{ "state": "disconnected", "lastError": null }`. `OBS_UNAVAILABLE` means OBS couldn't be reached, timed out, or closed the connection. `OBS_AUTH_FAILED` means OBS rejected `OBS_PASSWORD`.
+- `state`: `connected`, `connecting`, or `disconnected`
+- `lastError`: `null`, `OBS_UNAVAILABLE`, or `OBS_AUTH_FAILED`
 
-### Recording
+### Recording actions
 
-`GET /api/obs/recording`, `POST /api/obs/recording/start`, and `POST /api/obs/recording/stop` all return the same JSON object after talking to OBS. Start and stop first read `GetRecordStatus`, send `StartRecord` or `StopRecord` only if the current state allows it, then read `GetRecordStatus` again to confirm. A repeated start or stop is `409`, not a silent success. POST clients should send `Content-Type: application/json` (SvelteKit treats a missing type as a cross-site form and answers `403`).
+The recording routes read OBS state before performing a mutating action, then confirm the result. Repeated start/stop requests resolve to conflict-style errors instead of silently succeeding.
 
 ```json
 {
@@ -162,104 +198,120 @@ The endpoint only reports what the server already knows. It never opens a connec
 }
 ```
 
-| Field        | Meaning                                                                                         |
-| ------------ | ----------------------------------------------------------------------------------------------- |
-| `active`     | Whether OBS is recording                                                                        |
-| `paused`     | Whether the recording output is paused                                                          |
-| `timecode`   | OBS formatted timecode                                                                          |
-| `durationMs` | Recording duration in milliseconds                                                              |
-| `fileName`   | Basename of the saved file after a successful stop. `null` until OBS reports a path (see below) |
+Notes:
 
-`GetRecordStatus` does not include a filename. After stop, HTTP `fileName` comes from `StopRecord`'s `outputPath`; only the last path segment is returned, so a local username in the folder path never reaches the browser. While recording, HTTP GET still returns `fileName: null`. The SSE stream may include a cached basename from `RecordFileChanged`. If the app attaches after recording has already started, that event may have been missed and `fileName` stays `null` until a later file change or stop.
+- `GetRecordStatus` is used to validate current state before a start or stop request
+- the server refreshes recording status on a regular schedule so the displayed duration stays current
+- the browser interpolates elapsed time between status updates, which keeps the timer responsive even while the server is waiting for the next OBS heartbeat
+- the timer pauses when OBS reports recording as paused, so the UI reflects the live paused state instead of continuing to count forward
+- if the final status response after stopping shows a zero duration, the app retains the last displayed duration rather than resetting the timer immediately
+- `fileName` is only populated after OBS reports a saved output path
+- the app does not leak local filesystem details to the browser
 
-### Scenes
+### Scene actions
 
-`GET /api/obs/scenes` and `POST /api/obs/scenes/switch` return the same JSON object after talking to OBS. The list is returned in OBS Studio scene-dock order (top to bottom). `GetSceneList` itself is bottom-to-top, so the service reverses that array once; HTTP, SSE, and the dashboard do not sort or reorder again. Switch reads `GetSceneList` first, sends `SetCurrentProgramScene` only if the exact name exists and is not already current, then reads `GetCurrentProgramScene` to confirm. A switch to the current scene is `409`, not a silent success. POST clients should send `Content-Type: application/json` (SvelteKit treats a missing type as a cross-site form and answers `403`).
+Scene actions are checked before mutation. The response includes a list of scene names in OBS Studio scene-dock order (top-to-bottom), and a change is confirmed by reading the current program scene again.
 
 ```json
 { "scenes": ["Cam", "Screen"], "currentScene": "Cam" }
 ```
 
-| Field          | Meaning                                                     |
-| -------------- | ----------------------------------------------------------- |
-| `scenes`       | Scene names, in OBS Studio scene-dock order (top to bottom) |
-| `currentScene` | Current program scene name, or `null` if OBS has none       |
+Notes:
 
-Only names are returned. UUIDs, preview-scene fields, and raw OBS scene objects never reach the browser.
+- `GetSceneList` is read before switching scene
+- a switch to the currently active scene is rejected as a conflict
+- the application does not expose raw scene IDs or preview-scene objects to the browser
 
-### Real-time updates
+### SSE updates
 
-`GET /api/obs/events` is a Server-Sent Events stream (`text/event-stream`). The dashboard opens it with `EventSource` after the initial HTTP GETs. The first frame is `snapshot`; later frames are `connection`, `recording`, or `scenes`, using the same JSON shapes as the HTTP APIs. A comment keepalive (`: ping`) is sent about every 20 seconds.
+`GET /api/obs/events` streams state over Server-Sent Events. The dashboard opens the stream after its initial HTTP fetch and receives:
 
-The stream stays open when OBS is unavailable. One shared OBS WebSocket serves every browser; the server reconnects with 1s / 2s / 5s backoff while at least one SSE client is connected, and does not retry a rejected password (`OBS_AUTH_FAILED`). Recording duration is refreshed from `GetRecordStatus` about once per second while recording. The browser clock only interpolates between those snapshots, and it does not advance while OBS reports the recording as paused. After stop, if OBS reports `durationMs: 0`, the dashboard keeps the last elapsed time from this page session (dashboard stop or OBS-side stop).
+- `snapshot` for the initial state
+- `connection` for connection status updates
+- `recording` for recording status changes
+- `scenes` for scene list updates
+
+The SSE stream remains open through reconnects while at least one client is attached. The server keeps a single shared OBS WebSocket session and reconnects with backoff when needed. Authentication failures are not retried automatically, and the browser never sees raw OBS credentials or authentication data.
+
+The dashboard also guards against stale HTTP responses overwriting newer SSE state, which matters when the page is already receiving live updates.
 
 ### Action errors
 
-Recording and scene routes use `{ "error": { "code", "message" } }`. Being disconnected is a failed action, unlike `GET /api/obs/status`.
+Recording and scene routes return structured errors in the form `{ "error": { "code", "message" } }`. Disconnection is a failed action, while `GET /api/obs/status` is intentionally tolerant of a disconnected OBS state.
 
-| HTTP | `error.code`         | When                                                                                                                             |
-| ---- | -------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| 400  | `INVALID_REQUEST`    | Switch body is missing, not JSON, or `sceneName` is not a non-empty string                                                       |
-| 404  | `SCENE_NOT_FOUND`    | The requested scene name is not in the OBS list                                                                                  |
-| 409  | `SCENE_CONFLICT`     | Switch to the scene that is already current                                                                                      |
-| 409  | `RECORDING_CONFLICT` | Start while already recording, or stop while not recording                                                                       |
-| 503  | `OBS_UNAVAILABLE`    | OBS could not be reached, timed out, or the connection dropped                                                                   |
-| 503  | `OBS_AUTH_FAILED`    | OBS rejected `OBS_PASSWORD`                                                                                                      |
-| 502  | `OBS_REQUEST_FAILED` | OBS rejected the request, or the new state could not be confirmed. If unconfirmed, check the matching GET route before retrying. |
-| 500  | `INTERNAL_ERROR`     | Unexpected server error. The body never includes internals                                                                       |
+| HTTP | `error.code`         | Meaning                                                           |
+| ---- | -------------------- | ----------------------------------------------------------------- |
+| 400  | `INVALID_REQUEST`    | Request body is missing, invalid JSON, or the scene name is empty |
+| 404  | `SCENE_NOT_FOUND`    | The requested scene name is not in OBS                            |
+| 409  | `SCENE_CONFLICT`     | The scene is already current                                      |
+| 409  | `RECORDING_CONFLICT` | Start while already recording or stop while not recording         |
+| 503  | `OBS_UNAVAILABLE`    | OBS could not be reached, timed out, or the socket dropped        |
+| 503  | `OBS_AUTH_FAILED`    | OBS rejected the configured password                              |
+| 502  | `OBS_REQUEST_FAILED` | OBS rejected a request or the post-action confirmation failed     |
+| 500  | `INTERNAL_ERROR`     | Unexpected server error                                           |
+
+## Architecture notes
+
+The app separates browser concerns from the OBS connection model:
+
+- the browser only talks to the app’s own HTTP endpoints and EventSource stream
+- a server-only OBS connection object owns the shared WebSocket session
+- OBS events are distributed through an in-process event hub to connected SSE clients
+- the dashboard merges snapshot and live updates without letting older requests overwrite newer state
+
+This keeps the browser free of OBS credentials and avoids leaking connection details, file paths, or local OBS configuration into the client.
+
+## Safety and limitations
+
+- the live OBS integration suite is opt-in and intentionally separate from `npm test` and `npm run verify`
+- the suite can mutate the active scene and start or stop recording in OBS
+- the tests restore the original scene and refuse to stop a recording unless the test started it
+- the app and OBS instance must be running before the live integration suite is launched
+- the project is designed for local OBS control rather than general-purpose remote administration
 
 ## Project structure
 
 ```text
 src/
   app.html                 HTML template
-  app.d.ts                 App-wide type declarations
-  env.ts                   Declares and validates the OBS environment variables
-  lib/                     Code shared between server and browser (imported via #lib)
-    dashboard/             Browser dashboard client, elapsed time, controls, and SSE apply helpers
-    components/            Dashboard panels and colocated `*.svelte.spec.ts` tests
-    server/obs/            Server-only OBS integration; SvelteKit blocks browser imports
-      config.ts            Validators for the OBS host, port and password
-      connection.ts        Shared OBS WebSocket connection (lazy, one attempt at a time)
-      events.ts            In-process hub: OBS events, SSE fan-out, reconnect, duration poll
-      errors.ts            Shared request-error codes for recording and scenes
-      recording.ts         Start/stop/status using the shared connection
-      scenes.ts            List/switch using the shared connection
-      *.spec.ts            Unit tests with a stubbed OBS client
+  app.d.ts                 App-wide Svelte type declarations
+  env.ts                   Declares the runtime OBS environment contract
+  lib/
+    components/            Svelte panels and reusable dashboard UI
+    dashboard/             Browser-side state merge logic and elapsed-time helpers
+    server/obs/            Server-only OBS WebSocket integration layer
+      config.ts            OBS host/port/password validation
+      connection.ts        Shared outbound OBS connection and lifecycle management
+      events.ts            In-process event hub and SSE fan-out
+      recording.ts         Recording start/stop/status logic
+      scenes.ts            Scene list and scene-switch logic
+      errors.ts            Shared request error codes
   routes/
-    +layout.svelte         Global layout; loads the Tailwind stylesheet
-    +page.svelte           Dashboard page
-    layout.css             Tailwind entry point
-    api/health/
-      +server.ts           GET /api/health
-      health.spec.ts       Route test (Vitest)
-    api/obs/
-      respond.ts           Maps OBS errors to HTTP JSON for action routes
-      status/
-        +server.ts         GET /api/obs/status
-        status.spec.ts     Route tests with a mocked connection service
-      recording/
-        +server.ts         GET /api/obs/recording
-        start/+server.ts   POST /api/obs/recording/start
-        stop/+server.ts    POST /api/obs/recording/stop
-        recording.spec.ts  Route tests with a mocked recording service
-      scenes/
-        +server.ts         GET /api/obs/scenes
-        switch/+server.ts  POST /api/obs/scenes/switch
-        scenes.spec.ts     Route tests with a mocked scene service
-      events/
-        +server.ts         GET /api/obs/events
-        events.spec.ts     SSE route tests with a mocked event hub
-static/                    Files served as-is
-vite.config.ts             Vite, SvelteKit (adapter-node), and Vitest configuration
-eslint.config.js           ESLint configuration
-prettier.config.js         Prettier configuration
-tsconfig.json              TypeScript configuration (extends SvelteKit's generated config)
-.env.example               Example environment variables
-Dockerfile                 Multi-stage production image (adapter-node, Node 24)
-.dockerignore              Excludes .env, Git, docs, and local tooling from the image
+    +layout.svelte         Global layout and app shell
+    +page.svelte           Dashboard page and browser-side fetch/EventSource wiring
+    api/                  API endpoints for health, status, recording, scenes, and events
+static/                   Static assets served directly
+Dockerfile                Production adapter-node image
+README.md                 Project setup and usage notes
+.env.example              Example environment file
+vite.config.ts            Vite and SvelteKit configuration
+eslint.config.js          ESLint config
+prettier.config.js        Prettier config
+package.json              Scripts and dependencies
+vitest.integration.config.ts  Live OBS integration configuration
+playwright.config.ts      Browser E2E configuration
+tests/
+  e2e/                    Browser E2E tests with mocked API/SSE responses
+  integration/            Real OBS smoke tests; opt-in and separate from normal verification
 ```
 
-## Testing
+## Notes
 
-`npm test` runs two Vitest projects: `server` (Node) for OBS services, API routes, and dashboard helpers, and `client` (jsdom) for the dashboard Svelte panels. The OBS tests replace the WebSocket client's network methods with stubs, so they don't need OBS Studio to be running. They can't show that the app works with a real OBS instance; that needs a manual check against OBS.
+- `.env` is intentionally ignored and must not be committed
+- `.env.example` contains placeholder values only
+- local OBS recordings and generated test artifacts are excluded in `.gitignore`
+- the Docker image is a production `adapter-node` build and does not include secrets or development-only tooling
+
+```
+
+```
